@@ -392,7 +392,7 @@ jobs:
           use_openmp=OFF
           cpp_thread_safety_use_openmp=ON
           dgemm_args="512;12;4"
-          dgemm_mixed_args="131072;8;10"
+          dgemm_mixed_args="524288;16;20"
           dgemv_args="512;12;4"
           sanitizer_flags=
           if [ "${{ matrix.backend }}" = "openmp" ]; then
@@ -457,8 +457,8 @@ jobs:
             export LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
             export TSAN_OPTIONS=halt_on_error=1:exitcode=66:second_deadlock_stack=1
           else
-            export OPENBLAS_NUM_THREADS=4
-            export OMP_NUM_THREADS=8
+            export OPENBLAS_NUM_THREADS=8
+            export OMP_NUM_THREADS=16
           fi
           ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
 
@@ -541,7 +541,7 @@ jobs:
                 -DTARGET=CORE2 \
                 -DCPP_THREAD_SAFETY_TEST=ON \
                 -DCPP_THREAD_SAFETY_DGEMM_ARGS="384;8;4" \
-                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="131072;8;10" \
+                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="524288;16;20" \
                 -DCPP_THREAD_SAFETY_DGEMV_ARGS="384;8;4" \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -565,7 +565,7 @@ jobs:
         timeout-minutes: 30
         run: |
           cd build
-          OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
+          OPENBLAS_NUM_THREADS=8 OMP_NUM_THREADS=16 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
 
 
   cross_build:
