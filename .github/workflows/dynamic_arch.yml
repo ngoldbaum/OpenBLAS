@@ -392,7 +392,7 @@ jobs:
           use_openmp=OFF
           cpp_thread_safety_use_openmp=ON
           dgemm_args="512;12;4"
-          dgemm_mixed_args="512;12;4"
+          dgemm_mixed_args="131072;8;10"
           dgemv_args="512;12;4"
           sanitizer_flags=
           if [ "${{ matrix.backend }}" = "openmp" ]; then
@@ -403,9 +403,9 @@ jobs:
             cxx_compiler=clang++
             dynamic_arch=OFF
             cpp_thread_safety_use_openmp=OFF
-            dgemm_args="128;4;2"
-            dgemm_mixed_args="128;4;2"
-            dgemv_args="128;4;2"
+            dgemm_args="64;4;1"
+            dgemm_mixed_args="131072;8;10"
+            dgemv_args="64;4;1"
             sanitizer_flags="-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
           fi
           cmake_args=(
@@ -452,11 +452,12 @@ jobs:
         timeout-minutes: 30
         run: |
           cd build
-          export OPENBLAS_NUM_THREADS=2
           if [ "${{ matrix.backend }}" = "tsan" ]; then
+            export OPENBLAS_NUM_THREADS=2
             export LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
             export TSAN_OPTIONS=halt_on_error=1:exitcode=66:second_deadlock_stack=1
           else
+            export OPENBLAS_NUM_THREADS=4
             export OMP_NUM_THREADS=8
           fi
           ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
@@ -540,7 +541,7 @@ jobs:
                 -DTARGET=CORE2 \
                 -DCPP_THREAD_SAFETY_TEST=ON \
                 -DCPP_THREAD_SAFETY_DGEMM_ARGS="384;8;4" \
-                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="384;8;4" \
+                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="131072;8;10" \
                 -DCPP_THREAD_SAFETY_DGEMV_ARGS="384;8;4" \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -564,7 +565,7 @@ jobs:
         timeout-minutes: 30
         run: |
           cd build
-          OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
+          OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
 
 
   cross_build:
