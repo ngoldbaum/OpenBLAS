@@ -335,19 +335,19 @@ jobs:
 
 
   linux_thread_stress:
+    name: ${{ matrix.check-name }}
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        backend:
-          - pthread
-          - openmp
         include:
           - backend: pthread
-            use-openmp: OFF
+            check-name: "linux_thread_stress (pthread)"
           - backend: openmp
-            use-openmp: ON
+            check-name: "linux_thread_stress (openmp)"
+          - backend: tsan
+            check-name: linux_thread_sanitizer
 
     steps:
       - name: Checkout repository
@@ -360,16 +360,19 @@ jobs:
           APT::Install-Suggests "0";
           EOF
           sudo apt-get update
-          sudo apt-get install -y ccache ninja-build
+          sudo apt-get install -y ccache cmake ninja-build
+          if [ "${{ matrix.backend }}" = "tsan" ]; then
+            sudo apt-get install -y clang llvm
+          fi
 
       - name: Compilation cache
         uses: actions/cache@v5
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}-${{ github.ref }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-thread-${{ matrix.backend }}-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}-${{ github.ref }}
-            ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}
+            ccache-${{ runner.os }}-thread-${{ matrix.backend }}-${{ github.ref }}
+            ccache-${{ runner.os }}-thread-${{ matrix.backend }}
 
       - name: Configure ccache
         # Limit the maximum size and switch on compression to avoid exceeding the total disk or cache quota.
@@ -382,25 +385,61 @@ jobs:
       - name: Configure OpenBLAS
         run: |
           mkdir build && cd build
-          cmake -G Ninja \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_SHARED_LIBS=ON \
-                -DBUILD_STATIC_LIBS=OFF \
-                -DBUILD_WITHOUT_LAPACK=ON \
-                -DDYNAMIC_ARCH=ON \
-                -DNOFORTRAN=ON \
-                -DUSE_THREAD=ON \
-                -DUSE_OPENMP=${{ matrix.use-openmp }} \
-                -DNUM_THREADS=32 \
-                -DNUM_PARALLEL=2 \
-                -DTARGET=CORE2 \
-                -DCPP_THREAD_SAFETY_TEST=ON \
-                -DCPP_THREAD_SAFETY_DGEMM_ARGS="512;12;4" \
-                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="512;12;4" \
-                -DCPP_THREAD_SAFETY_DGEMV_ARGS="512;12;4" \
-                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-                ..
+          build_type=Release
+          c_compiler=gcc
+          cxx_compiler=g++
+          dynamic_arch=ON
+          use_openmp=OFF
+          cpp_thread_safety_use_openmp=ON
+          dgemm_args="512;12;4"
+          dgemm_mixed_args="512;12;4"
+          dgemv_args="512;12;4"
+          sanitizer_flags=
+          if [ "${{ matrix.backend }}" = "openmp" ]; then
+            use_openmp=ON
+          elif [ "${{ matrix.backend }}" = "tsan" ]; then
+            build_type=RelWithDebInfo
+            c_compiler=clang
+            cxx_compiler=clang++
+            dynamic_arch=OFF
+            cpp_thread_safety_use_openmp=OFF
+            dgemm_args="128;4;2"
+            dgemm_mixed_args="128;4;2"
+            dgemv_args="128;4;2"
+            sanitizer_flags="-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
+          fi
+          cmake_args=(
+            -G Ninja
+            "-DCMAKE_BUILD_TYPE=$build_type"
+            "-DCMAKE_C_COMPILER=$c_compiler"
+            "-DCMAKE_CXX_COMPILER=$cxx_compiler"
+            -DBUILD_SHARED_LIBS=ON
+            -DBUILD_STATIC_LIBS=OFF
+            -DBUILD_WITHOUT_LAPACK=ON
+            "-DDYNAMIC_ARCH=$dynamic_arch"
+            -DNOFORTRAN=ON
+            -DUSE_THREAD=ON
+            "-DUSE_OPENMP=$use_openmp"
+            -DNUM_THREADS=32
+            -DNUM_PARALLEL=2
+            -DTARGET=CORE2
+            -DCPP_THREAD_SAFETY_TEST=ON
+            "-DCPP_THREAD_SAFETY_USE_OPENMP=$cpp_thread_safety_use_openmp"
+            "-DCPP_THREAD_SAFETY_DGEMM_ARGS=$dgemm_args"
+            "-DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS=$dgemm_mixed_args"
+            "-DCPP_THREAD_SAFETY_DGEMV_ARGS=$dgemv_args"
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          )
+          if [ "${{ matrix.backend }}" = "tsan" ]; then
+            cmake_args+=(
+              "-DCMAKE_C_FLAGS=$sanitizer_flags"
+              "-DCMAKE_CXX_FLAGS=$sanitizer_flags"
+              -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=thread
+              -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+            )
+          fi
+          cmake "${cmake_args[@]}" ..
 
       - name: Build OpenBLAS
         run: cd build && cmake --build .
@@ -413,85 +452,13 @@ jobs:
         timeout-minutes: 30
         run: |
           cd build
-          OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
-
-
-  linux_thread_sanitizer:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Dependencies
-        run: |
-          cat << EOF | sudo tee -a /etc/apt/apt.conf.d/01norecommend
-          APT::Install-Recommends "0";
-          APT::Install-Suggests "0";
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y ccache clang cmake libomp-dev llvm ninja-build
-
-      - name: Compilation cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-thread-sanitizer-${{ github.ref }}-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-thread-sanitizer-${{ github.ref }}
-            ccache-${{ runner.os }}-thread-sanitizer
-
-      - name: Configure ccache
-        # Limit the maximum size and switch on compression to avoid exceeding the total disk or cache quota.
-        run: |
-          test -d ~/.ccache || mkdir -p ~/.ccache
-          echo "max_size = 250M" > ~/.ccache/ccache.conf
-          echo "compression = true" >> ~/.ccache/ccache.conf
-          ccache -s
-
-      - name: Configure OpenBLAS
-        run: |
-          mkdir build && cd build
-          cmake -G Ninja \
-                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-                -DCMAKE_C_COMPILER=clang \
-                -DCMAKE_CXX_COMPILER=clang++ \
-                -DBUILD_SHARED_LIBS=ON \
-                -DBUILD_STATIC_LIBS=OFF \
-                -DBUILD_WITHOUT_LAPACK=ON \
-                -DDYNAMIC_ARCH=OFF \
-                -DNOFORTRAN=ON \
-                -DUSE_THREAD=ON \
-                -DUSE_OPENMP=OFF \
-                -DTARGET=CORE2 \
-                -DCPP_THREAD_SAFETY_TEST=ON \
-                -DCPP_THREAD_SAFETY_DGEMM_ARGS="128;4;2" \
-                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="128;4;2" \
-                -DCPP_THREAD_SAFETY_DGEMV_ARGS="128;4;2" \
-                -DCMAKE_C_FLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer" \
-                -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer" \
-                -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread" \
-                -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
-                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-                ..
-
-      - name: Build OpenBLAS
-        run: cd build && cmake --build .
-
-      - name: Show ccache status
-        continue-on-error: true
-        run: ccache -s
-
-      - name: Run thread sanitizer stress tests
-        timeout-minutes: 30
-        env:
-          LLVM_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
-          OPENBLAS_NUM_THREADS: 2
-          OMP_NUM_THREADS: 4
-          TSAN_OPTIONS: halt_on_error=1:exitcode=66:second_deadlock_stack=1
-        run: |
-          cd build
+          export OPENBLAS_NUM_THREADS=2
+          if [ "${{ matrix.backend }}" = "tsan" ]; then
+            export LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
+            export TSAN_OPTIONS=halt_on_error=1:exitcode=66:second_deadlock_stack=1
+          else
+            export OMP_NUM_THREADS=8
+          fi
           ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
 
 

@@ -6,7 +6,6 @@
 #include <random>
 #include <string>
 #include <vector>
-#include <omp.h>
 #include "../cblas.h"
 #include "cpp_thread_safety_common.h"
 
@@ -33,7 +32,7 @@ int main(int argc, char* argv[]){
 	blasint randomMatSize = 512;
 	uint32_t numConcurrentThreads = 32;
 	uint32_t numTestRounds = 8;
-	uint32_t maxHwThreads = omp_get_max_threads();
+	uint32_t maxHwThreads = GetMaxHwThreads();
 	const double tolerance = 1.0E-10;
 
 	if (maxHwThreads < numConcurrentThreads)
@@ -103,7 +102,7 @@ int main(int argc, char* argv[]){
 	std::cout<<"done\n";
 
 	std::cout<<"Testing mixed CBLAS DGEMM thread safety\n";
-	omp_set_num_threads(numConcurrentThreads);
+	SetLauncherThreads(numConcurrentThreads);
 	const DgemmVariant *variants = dgemmVariants;
 	const uint32_t variantCount = numDgemmVariants;
 	for(uint32_t R=0; R<numTestRounds; R++){
@@ -115,8 +114,10 @@ int main(int argc, char* argv[]){
 			matBlock[i*3+2] = baseBlock[2];
 		}
 
-		std::cout<<"Launching "<<numConcurrentThreads<<" threads simultaneously using OpenMP..."<<std::flush;
+		std::cout<<"Launching "<<numConcurrentThreads<<" threads simultaneously"<<LauncherName()<<"..."<<std::flush;
+		#ifdef CPP_THREAD_SAFETY_USE_OPENMP
 		#pragma omp parallel for default(none) shared(futureBlock, matBlock, randomMatSize, numConcurrentThreads, variants, variantCount)
+		#endif
 		for(uint32_t i=0; i<numConcurrentThreads; i++){
 			const DgemmVariant variant = variants[i % variantCount];
 			futureBlock[i] = std::async(std::launch::async, launch_cblas_dgemm_variant, variant, &matBlock[i*3][0], &matBlock[i*3+1][0], &matBlock[i*3+2][0], randomMatSize);
