@@ -2,7 +2,11 @@
 #include <vector>
 #include <random>
 #include <future>
+#ifdef OPENBLAS_USE_GENERATED_CBLAS_H
+#include "generated/cblas.h"
+#else
 #include "../cblas.h"
+#endif
 #include "cpp_thread_safety_common.h"
 
 void launch_cblas_dgemv(double* A, double* x, double* y, const blasint randomMatSize)

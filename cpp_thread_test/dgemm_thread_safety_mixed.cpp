@@ -7,7 +7,11 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef OPENBLAS_USE_GENERATED_CBLAS_H
+#include "generated/cblas.h"
+#else
 #include "../cblas.h"
+#endif
 #include "cpp_thread_safety_common.h"
 
 void compute_dgemm_pair(std::vector<double>& transA, std::vector<double>& noTransA, std::vector<double>& B, double* firstOutput, double* secondOutput, const blasint randomMatSize, const bool sameVariant){
@@ -48,12 +52,12 @@ int main(int argc, char* argv[]){
 	if (maxHwThreads < numConcurrentThreads)
 		numConcurrentThreads = maxHwThreads;
 
-	if (argc > 5){
-		std::cout<<"ERROR: too many arguments for mixed DGEMM thread safety tester"<<std::endl;
-		abort();
+	if (argc != 1 && argc != 4 && argc != 5){
+		std::cout<<"ERROR: expected zero arguments, or: <M> <threads> <rounds> [sameVariant]"<<std::endl;
+		return 1;
 	}
 
-	if(argc >= 4){
+	if(argc == 4 || argc == 5){
 		std::vector<std::string> cliArgs;
 		for (int i = 1; i < argc; i++){
 			cliArgs.push_back(argv[i]);
@@ -127,7 +131,7 @@ int main(int argc, char* argv[]){
 	std::cout<<"Mixed DGEMM mismatches: "<<mismatches<<std::endl;
 	if (mismatches != 0) {
 		std::cout<<"Mixed CBLAS DGEMM thread safety test FAILED!"<<std::endl;
-		return -1;
+		return 1;
 	}
 
 	std::cout<<"Mixed CBLAS DGEMM thread safety test PASSED!\n"<<std::endl;
