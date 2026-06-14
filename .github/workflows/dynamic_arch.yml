@@ -334,6 +334,272 @@ jobs:
           echo "::endgroup::"
 
 
+  linux_thread_stress:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - pthread
+          - openmp
+        include:
+          - backend: pthread
+            use-openmp: OFF
+          - backend: openmp
+            use-openmp: ON
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          cat << EOF | sudo tee -a /etc/apt/apt.conf.d/01norecommend
+          APT::Install-Recommends "0";
+          APT::Install-Suggests "0";
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y ccache ninja-build
+
+      - name: Compilation cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}-${{ github.ref }}
+            ccache-${{ runner.os }}-thread-stress-${{ matrix.backend }}
+
+      - name: Configure ccache
+        # Limit the maximum size and switch on compression to avoid exceeding the total disk or cache quota.
+        run: |
+          test -d ~/.ccache || mkdir -p ~/.ccache
+          echo "max_size = 250M" > ~/.ccache/ccache.conf
+          echo "compression = true" >> ~/.ccache/ccache.conf
+          ccache -s
+
+      - name: Configure OpenBLAS
+        run: |
+          mkdir build && cd build
+          cmake -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_SHARED_LIBS=ON \
+                -DBUILD_STATIC_LIBS=OFF \
+                -DBUILD_WITHOUT_LAPACK=ON \
+                -DDYNAMIC_ARCH=ON \
+                -DNOFORTRAN=ON \
+                -DUSE_THREAD=ON \
+                -DUSE_OPENMP=${{ matrix.use-openmp }} \
+                -DNUM_THREADS=32 \
+                -DNUM_PARALLEL=2 \
+                -DTARGET=CORE2 \
+                -DCPP_THREAD_SAFETY_TEST=ON \
+                -DCPP_THREAD_SAFETY_DGEMM_ARGS="512;12;4" \
+                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="512;12;4" \
+                -DCPP_THREAD_SAFETY_DGEMV_ARGS="512;12;4" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                ..
+
+      - name: Build OpenBLAS
+        run: cd build && cmake --build .
+
+      - name: Show ccache status
+        continue-on-error: true
+        run: ccache -s
+
+      - name: Run thread stress tests
+        timeout-minutes: 30
+        run: |
+          cd build
+          OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
+
+
+  linux_thread_sanitizer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          cat << EOF | sudo tee -a /etc/apt/apt.conf.d/01norecommend
+          APT::Install-Recommends "0";
+          APT::Install-Suggests "0";
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y ccache clang cmake libomp-dev llvm ninja-build
+
+      - name: Compilation cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-thread-sanitizer-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-thread-sanitizer-${{ github.ref }}
+            ccache-${{ runner.os }}-thread-sanitizer
+
+      - name: Configure ccache
+        # Limit the maximum size and switch on compression to avoid exceeding the total disk or cache quota.
+        run: |
+          test -d ~/.ccache || mkdir -p ~/.ccache
+          echo "max_size = 250M" > ~/.ccache/ccache.conf
+          echo "compression = true" >> ~/.ccache/ccache.conf
+          ccache -s
+
+      - name: Configure OpenBLAS
+        run: |
+          mkdir build && cd build
+          cmake -G Ninja \
+                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DCMAKE_C_COMPILER=clang \
+                -DCMAKE_CXX_COMPILER=clang++ \
+                -DBUILD_SHARED_LIBS=ON \
+                -DBUILD_STATIC_LIBS=OFF \
+                -DBUILD_WITHOUT_LAPACK=ON \
+                -DDYNAMIC_ARCH=OFF \
+                -DNOFORTRAN=ON \
+                -DUSE_THREAD=ON \
+                -DUSE_OPENMP=OFF \
+                -DTARGET=CORE2 \
+                -DCPP_THREAD_SAFETY_TEST=ON \
+                -DCPP_THREAD_SAFETY_DGEMM_ARGS="128;4;2" \
+                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="128;4;2" \
+                -DCPP_THREAD_SAFETY_DGEMV_ARGS="128;4;2" \
+                -DCMAKE_C_FLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer" \
+                -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer" \
+                -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread" \
+                -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                ..
+
+      - name: Build OpenBLAS
+        run: cd build && cmake --build .
+
+      - name: Show ccache status
+        continue-on-error: true
+        run: ccache -s
+
+      - name: Run thread sanitizer stress tests
+        timeout-minutes: 30
+        env:
+          LLVM_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
+          OPENBLAS_NUM_THREADS: 2
+          OMP_NUM_THREADS: 4
+          TSAN_OPTIONS: halt_on_error=1:exitcode=66:second_deadlock_stack=1
+        run: |
+          cd build
+          ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
+
+
+  msys2_thread_stress:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    env:
+      CHERE_INVOKING: 1
+
+    steps:
+      - name: Get CPU name
+        shell: pwsh
+        run : |
+          Get-CIMInstance -Class Win32_Processor | Select-Object -Property Name
+
+      - name: Install build dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          release: false  # Use pre-installed version
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-cc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Prepare ccache
+        # Get cache location of ccache
+        # Create key that is used in action/cache/restore and action/cache/save steps
+        id: ccache-prepare
+        run: |
+          echo "ccachedir=$(cygpath -m $(ccache -k cache_dir))" >> $GITHUB_OUTPUT
+          # We include the commit sha in the cache key, as new cache entries are
+          # only created if there is no existing entry for the key yet.
+          echo "key=ccache-msys2-thread-stress-${{ github.ref }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.ccache-prepare.outputs.ccachedir }}
+          key: ${{ steps.ccache-prepare.outputs.key }}
+          # Restore a matching ccache cache entry. Prefer same branch.
+          restore-keys: |
+            ccache-msys2-thread-stress-${{ github.ref }}
+            ccache-msys2-thread-stress
+
+      - name: Configure ccache
+        # Limit the maximum size and switch on compression to avoid exceeding the total disk or cache quota.
+        run: |
+          which ccache
+          test -d ${{ steps.ccache-prepare.outputs.ccachedir }} || mkdir -p ${{ steps.ccache-prepare.outputs.ccachedir }}
+          echo "max_size = 250M" > ${{ steps.ccache-prepare.outputs.ccachedir }}/ccache.conf
+          echo "compression = true" >> ${{ steps.ccache-prepare.outputs.ccachedir }}/ccache.conf
+          ccache -p
+          ccache -s
+
+      - name: Configure OpenBLAS
+        run: |
+          mkdir build && cd build
+          cmake -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_SHARED_LIBS=ON \
+                -DBUILD_STATIC_LIBS=OFF \
+                -DBUILD_WITHOUT_LAPACK=ON \
+                -DDYNAMIC_ARCH=ON \
+                -DNOFORTRAN=ON \
+                -DUSE_THREAD=ON \
+                -DUSE_OPENMP=OFF \
+                -DNUM_THREADS=32 \
+                -DTARGET=CORE2 \
+                -DCPP_THREAD_SAFETY_TEST=ON \
+                -DCPP_THREAD_SAFETY_DGEMM_ARGS="384;8;4" \
+                -DCPP_THREAD_SAFETY_DGEMM_MIXED_ARGS="384;8;4" \
+                -DCPP_THREAD_SAFETY_DGEMV_ARGS="384;8;4" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                ..
+
+      - name: Build OpenBLAS
+        run: cd build && cmake --build .
+
+      - name: Show ccache status
+        continue-on-error: true
+        run: ccache -s
+
+      - name: Save ccache
+        # Save the cache after we are done (successfully) building
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.ccache-prepare.outputs.ccachedir }}
+          key: ${{ steps.ccache-prepare.outputs.key }}
+
+      - name: Run thread stress tests
+        timeout-minutes: 30
+        run: |
+          cd build
+          OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=8 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
+
+
   cross_build:
     if: "github.repository == 'OpenMathLib/OpenBLAS'"
     runs-on: ubuntu-22.04

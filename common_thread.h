@@ -191,6 +191,9 @@ int exec_blas(BLASLONG num_cpu, blas_param_t *param, void *buffer);
 
 #ifndef ASSEMBLER
 
+void blas_level3_thread_enter(void);
+void blas_level3_thread_leave(void);
+
 int blas_level1_thread(int mode, BLASLONG m, BLASLONG n, BLASLONG k, void *alpha,
 		       void *a, BLASLONG lda,
 		       void *b, BLASLONG ldb,
