@@ -417,6 +417,10 @@ jobs:
             -DBUILD_SHARED_LIBS=ON
             -DBUILD_STATIC_LIBS=OFF
             -DBUILD_WITHOUT_LAPACK=ON
+            -DBUILD_SINGLE=OFF
+            -DBUILD_DOUBLE=ON
+            -DBUILD_COMPLEX=OFF
+            -DBUILD_COMPLEX16=OFF
             "-DDYNAMIC_ARCH=$dynamic_arch"
             -DNOFORTRAN=ON
             -DUSE_THREAD=ON
@@ -443,7 +447,9 @@ jobs:
           cmake "${cmake_args[@]}" ..
 
       - name: Build OpenBLAS
-        run: cd build && cmake --build .
+        run: |
+          cd build
+          cmake --build . --target dgemm_thread_safety dgemm_thread_safety_mixed dgemv_thread_safety
 
       - name: Show ccache status
         continue-on-error: true
@@ -535,7 +541,11 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON \
                 -DBUILD_STATIC_LIBS=OFF \
                 -DBUILD_WITHOUT_LAPACK=ON \
-                -DDYNAMIC_ARCH=ON \
+                -DBUILD_SINGLE=OFF \
+                -DBUILD_DOUBLE=ON \
+                -DBUILD_COMPLEX=OFF \
+                -DBUILD_COMPLEX16=OFF \
+                -DDYNAMIC_ARCH=OFF \
                 -DNOFORTRAN=ON \
                 -DUSE_THREAD=ON \
                 -DUSE_OPENMP=OFF \
@@ -550,7 +560,9 @@ jobs:
                 ..
 
       - name: Build OpenBLAS
-        run: cd build && cmake --build .
+        run: |
+          cd build
+          cmake --build . --target dgemm_thread_safety dgemm_thread_safety_mixed dgemv_thread_safety
 
       - name: Show ccache status
         continue-on-error: true
@@ -567,6 +579,7 @@ jobs:
         timeout-minutes: 30
         run: |
           cd build
+          export PATH="$PWD/lib:$PATH"
           OPENBLAS_NUM_THREADS=8 OMP_NUM_THREADS=16 ctest -R 'dgemm_thread_safety|dgemm_thread_safety_mixed|dgemv_thread_safety' --output-on-failure
 
 
