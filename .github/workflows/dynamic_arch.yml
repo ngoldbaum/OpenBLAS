@@ -335,7 +335,6 @@ jobs:
 
 
   linux_thread_stress:
-    if: "github.repository == 'OpenMathLib/OpenBLAS'"
     name: ${{ matrix.check-name }}
     runs-on: ubuntu-latest
 
@@ -471,7 +470,6 @@ jobs:
 
 
   msys2_thread_stress:
-    if: "github.repository == 'OpenMathLib/OpenBLAS'"
     runs-on: windows-latest
 
     defaults:
